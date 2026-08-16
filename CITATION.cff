@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+title: scCRS: Cytokine-response signature scoring for single-cell sequencing
+version: 0.2.0
+message: If you use scCRS, please cite the software and the Immune Dictionary resource.
+authors:
+  - family-names: Xu
+    given-names: Lab
+repository-code: https://github.com/Xulab-collab/scCRS
+license: MIT

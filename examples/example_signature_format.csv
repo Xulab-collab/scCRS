@@ -1,0 +1,6 @@
+cytokine,cell_type,gene,direction,weight
+IFN_beta,Monocyte,IFI6,up,1.4
+IFN_beta,Monocyte,ISG15,up,1.2
+IFN_beta,Monocyte,IL1B,down,0.8
+TNF,Monocyte,NFKBIA,up,1.1
+TNF,Monocyte,TNFAIP3,up,1.0

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scCRS"
+version = "0.2.0"
+description = "Cytokine-response signature scoring and downstream single-cell analyses"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Xulab-collab"}]
+keywords = ["single-cell", "cytokine", "scRNA-seq", "UCell", "Monocle3", "gene-regulatory-network"]
+dependencies = [
+  "anndata>=0.10",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scipy>=1.10",
+  "openpyxl>=3.1",
+  "matplotlib>=3.7",
+  "seaborn>=0.13",
+  "networkx>=3.1",
+  "pydot>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "build>=1"]
+
+[project.scripts]
+sccrs-score = "sccrs.workflows.score:main"
+sccrs-prepare-signatures = "sccrs.workflows.prepare_signatures:main"
+sccrs-add-group = "sccrs.workflows.add_group:main"
+sccrs-prepare-composition = "sccrs.workflows.prepare_composition:main"
+sccrs-composition-association = "sccrs.workflows.composition_association:main"
+sccrs-state-association = "sccrs.workflows.state_association:main"
+sccrs-state-scatter = "sccrs.workflows.state_scatter:main"
+sccrs-bcell-network = "sccrs.workflows.bcell_network:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sccrs*"]
+
+[tool.setuptools.package-data]
+sccrs = ["r/*.R", "resources/*.csv"]
+

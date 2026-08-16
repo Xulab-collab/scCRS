@@ -1,3 +1,27 @@
+Metadata-Version: 2.4
+Name: scCRS
+Version: 0.2.0
+Summary: Cytokine-response signature scoring and downstream single-cell analyses
+Author: Xulab-collab
+License: MIT
+Keywords: single-cell,cytokine,scRNA-seq,UCell,Monocle3,gene-regulatory-network
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: anndata>=0.10
+Requires-Dist: numpy>=1.24
+Requires-Dist: pandas>=2.0
+Requires-Dist: scipy>=1.10
+Requires-Dist: openpyxl>=3.1
+Requires-Dist: matplotlib>=3.7
+Requires-Dist: seaborn>=0.13
+Requires-Dist: networkx>=3.1
+Requires-Dist: pydot>=2.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7; extra == "dev"
+Requires-Dist: build>=1; extra == "dev"
+Dynamic: license-file
+
 # scCRS
 
 **scCRS (Cytokine-response signature scoring for single-cell sequencing)** is a modular workflow for inferring cell-type-resolved cytokine-response programmes from scRNA-seq data and connecting those programmes to cell composition, T/B-cell states, B-cell regulatory networks, and Monocle3 pseudotime trajectories.
@@ -83,7 +107,7 @@ Rscript src/sccrs/r/scCRS_plot_group_celltype_response.R \
   --cytokines "IFN-α1,IFN-β,IFN-γ,IFN-ε,IFN-κ,IFN-λ2"
 ```
 
-The plotting scripts save editable vector PDF figures, the exact plotting data and the group-comparison statistics. Their input must contain the group column produced by `sccrs-add-group`.
+The plotting scripts save the PDF and SVG-compatible vector graphics, the exact plotting data and the group-comparison statistics. Their input must contain the group column produced by `sccrs-add-group`.
 
 ### 3. Cell-proportion association
 

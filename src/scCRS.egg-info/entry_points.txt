@@ -1,0 +1,9 @@
+[console_scripts]
+sccrs-add-group = sccrs.workflows.add_group:main
+sccrs-bcell-network = sccrs.workflows.bcell_network:main
+sccrs-composition-association = sccrs.workflows.composition_association:main
+sccrs-prepare-composition = sccrs.workflows.prepare_composition:main
+sccrs-prepare-signatures = sccrs.workflows.prepare_signatures:main
+sccrs-score = sccrs.workflows.score:main
+sccrs-state-association = sccrs.workflows.state_association:main
+sccrs-state-scatter = sccrs.workflows.state_scatter:main

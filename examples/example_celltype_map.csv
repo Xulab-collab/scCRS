@@ -1,0 +1,7 @@
+patient_cell_type,signature_cell_type
+CD14 Monocyte,Monocyte
+CD16 Monocyte,Monocyte
+CD4 T cell,T cell CD4
+CD8 T cell,T cell CD8
+NK cell,NK cell
+B cell,B cell

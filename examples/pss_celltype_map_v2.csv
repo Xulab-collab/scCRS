@@ -1,0 +1,10 @@
+patient_cell_type,signature_cell_type,interpretation
+B cells,B_cell,Direct dictionary match
+CD4+ T,T_cell_CD4,Direct dictionary match
+CD8+ T,T_cell_CD8,Direct dictionary match
+ILCs,ILC,Direct dictionary match
+MAIT cells,T_cell_CD8,Approximation only: use CD8 T-cell signatures and label results as MAIT (CD8 proxy)
+NK,NK_cell,Direct dictionary match
+myeloid cell,Monocyte,Approximation only: broad myeloid cluster scored using monocyte signatures
+γδT,T_cell_gd,Direct dictionary match
+Platelet and Mega,Unsupported,No matched cell type in the Immune Dictionary; intentionally excluded
