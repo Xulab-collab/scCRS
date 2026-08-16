@@ -17,8 +17,16 @@
 ## Installation
 
 ```bash
+
+
 git clone https://github.com/Xulab-collab/scCRS.git
 cd scCRS
+conda create -n sccrs python=3.10 -y
+conda activate sccrs
+pip install -e .
+# Optional Graphviz executable for dot layout:
+conda install -c conda-forge graphviz
+
 python -m venv .venv
 source .venv/bin/activate              # Linux/macOS
 # .venv\Scripts\Activate.ps1          # Windows PowerShell
