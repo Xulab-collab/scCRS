@@ -109,7 +109,7 @@ sccrs-state-scatter   --data results/state_association/state_cytokine_merged_dat
 
 ### 4. B-cell cytokine-response regulatory networks
 
-Download a TF-target prior before running. A CollecTRI/DoRothEA high-confidence TSV is supported directly; cite both resources in downstream work.
+Download a TF-target prior before running (The relevant data is stored at https://zenodo.org/records/21971583). A CollecTRI/DoRothEA high-confidence TSV is supported directly; cite both resources in downstream work.
 
 ```bash
 sccrs-bcell-network   --h5ad Bcells_filtered.h5ad   --signatures resources/Cytokine_Signatures_Human_All_CellTypes.csv   --tf-target-prior regulatory_network_resources/CollecTRI_DoRothEA_A-C.tsv   --outdir results/bcell_network   --patient-col orig.ident --celltype-col cell_type --group-col group   --layer raw --signature-celltype B_cell   --min-cells 30 --min-patients 5 --min-abs-rho 0.50 --max-q 0.10   --make-pdf
