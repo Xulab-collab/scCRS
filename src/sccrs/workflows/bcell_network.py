@@ -22,10 +22,13 @@ import anndata as ad
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.lines import Line2D
+from matplotlib.patches import Ellipse, Polygon
 import networkx as nx
 import numpy as np
 import pandas as pd
 from scipy import sparse
+from scipy.spatial import ConvexHull, QhullError
 from scipy.stats import norm, rankdata, spearmanr
 
 
@@ -74,7 +77,7 @@ def select_matrix(adata: ad.AnnData, layer: str | None):
 
 def is_b_cell(label: object) -> bool:
     text = str(label).lower()
-    return bool(re.search(r"(^|[ _-])b([ _-]|$)|b[ _-]?cell", text)) or any(token in text for token in ("plasma", "plasmablast", "antibody-secreting", "asc"))
+    return bool(re.search(r"(^|[ _-])b([ _-]|$)|b[ _-]?cell", text))
 
 
 def load_signatures(path: str, signature_celltype: str, cytokines: str | None) -> pd.DataFrame:
@@ -184,12 +187,114 @@ def make_edges(prior: pd.DataFrame, stats: pd.DataFrame, cytokine: str, celltype
     return edges.sort_values("edge_priority", ascending=False).head(max_edges).reset_index(drop=True)
 
 
-def plot_network(edges: pd.DataFrame, title: str, pdf: PdfPages, difference: bool = False, max_plot_edges: int = 35):
-    """Draw a deliberately sparse, layered, Illustrator-editable network page.
+def _spread_positions(pos: dict[str, np.ndarray], min_distance: float = 0.22, iterations: int = 180) -> dict[str, np.ndarray]:
+    """Apply deterministic short-range repulsion after the spring layout."""
+    nodes = list(pos)
+    if len(nodes) < 2:
+        return pos
+    xy = np.asarray([pos[node] for node in nodes], dtype=float)
+    for _ in range(iterations):
+        displacement = np.zeros_like(xy)
+        changed = False
+        for i in range(len(nodes) - 1):
+            for j in range(i + 1, len(nodes)):
+                delta = xy[i] - xy[j]
+                distance = float(np.hypot(delta[0], delta[1]))
+                if distance >= min_distance:
+                    continue
+                if distance < 1e-10:
+                    angle = ((i + 1) * 37 + (j + 1) * 73) * np.pi / 180.0
+                    delta = np.array([np.cos(angle), np.sin(angle)])
+                    distance = 1.0
+                push = (min_distance - distance) / distance * delta * 0.52
+                displacement[i] += push
+                displacement[j] -= push
+                changed = True
+        xy += displacement
+        if not changed:
+            break
+    return {node: xy[i] for i, node in enumerate(nodes)}
 
-    Full edge tables are retained in CSV/GraphML.  Restricting the displayed
-    edges avoids the unreadable label and edge overlap that occurs in dense
-    regulatory networks.
+
+def _compact_component_layout(graph: nx.Graph) -> dict[str, np.ndarray]:
+    """Lay out disconnected regulatory components locally, then pack them tightly."""
+    components = sorted((set(component) for component in nx.connected_components(graph)), key=lambda x: (-len(x), sorted(x)))
+    packed, boxes = [], []
+    for index, members in enumerate(components):
+        subgraph = graph.subgraph(members).copy()
+        n = max(subgraph.number_of_nodes(), 1)
+        local = nx.spring_layout(subgraph, seed=20260819 + index, weight="weight",
+                                 k=1.35 / np.sqrt(max(n, 2)), iterations=500,
+                                 scale=max(1.2, np.sqrt(n)), center=(0, 0))
+        local = _spread_positions(local, min_distance=.72, iterations=220)
+        coords = np.asarray(list(local.values()), dtype=float)
+        lower, upper = coords.min(axis=0), coords.max(axis=0)
+        # Include enough clearance for node symbols and the enlarged text labels.
+        width, height = np.maximum(upper - lower + 2.3, 3.2)
+        normalized = {node: np.asarray(value) - lower + 1.15 for node, value in local.items()}
+        packed.append(normalized)
+        boxes.append((float(width), float(height)))
+    if len(packed) == 1:
+        only = packed[0]
+        centre = np.mean(np.asarray(list(only.values())), axis=0)
+        return {node: value - centre for node, value in only.items()}
+    total_area = sum(width * height for width, height in boxes)
+    shelf_width = max(max(width for width, _ in boxes), np.sqrt(total_area) * 1.25)
+    result, cursor_x, cursor_y, row_height = {}, 0.0, 0.0, 0.0
+    for local, (width, height) in zip(packed, boxes):
+        if cursor_x > 0 and cursor_x + width > shelf_width:
+            cursor_x = 0.0
+            cursor_y -= row_height + 1.25
+            row_height = 0.0
+        for node, value in local.items():
+            result[node] = value + np.array([cursor_x, cursor_y])
+        cursor_x += width + 1.25
+        row_height = max(row_height, height)
+    centre = np.mean(np.asarray(list(result.values())), axis=0)
+    return {node: value - centre for node, value in result.items()}
+
+def _network_communities(graph: nx.DiGraph) -> list[set[str]]:
+    """Detect dense, undirected regulatory modules without external dependencies."""
+    undirected = graph.to_undirected()
+    if undirected.number_of_edges() == 0:
+        return [set(undirected.nodes)]
+    try:
+        modules = list(nx.community.greedy_modularity_communities(undirected, weight="weight"))
+    except Exception:
+        modules = [set(nodes) for nodes in nx.connected_components(undirected)]
+    return [set(module) for module in modules if module]
+
+
+def _draw_module_backgrounds(ax, pos: dict[str, np.ndarray], communities: list[set[str]]) -> None:
+    """Add light convex-hull module envelopes behind dense regulatory clusters."""
+    palette = ["#dcecc8", "#cce9e2", "#d9e7f6", "#f5dfbc", "#e8d7ef", "#f4d2d8", "#d9e8d0"]
+    for index, members in enumerate(communities):
+        if len(members) < 3:
+            continue
+        points = np.asarray([pos[node] for node in members if node in pos], dtype=float)
+        if len(points) < 3:
+            continue
+        color = palette[index % len(palette)]
+        try:
+            hull = ConvexHull(points)
+            polygon = points[hull.vertices]
+            centroid = polygon.mean(axis=0)
+            # Expand the hull slightly so labels and nodes sit inside a soft module region.
+            polygon = centroid + 1.25 * (polygon - centroid)
+            ax.add_patch(Polygon(polygon, closed=True, facecolor=color, edgecolor="none", alpha=.48, zorder=0))
+        except QhullError:
+            centre = points.mean(axis=0)
+            span = np.ptp(points, axis=0)
+            ax.add_patch(Ellipse(centre, width=max(.60, span[0] + .55), height=max(.60, span[1] + .55),
+                                 facecolor=color, edgecolor="none", alpha=.48, zorder=0))
+
+
+def plot_network(edges: pd.DataFrame, title: str, pdf: PdfPages, difference: bool = False, max_plot_edges: int = 35):
+    """Draw a modular force-directed regulatory network with editable vector artwork.
+
+    Dense TF-target subnetworks are grouped by modularity and given translucent,
+    network-shaped envelopes.  Full results remain in CSV tables; PDF pages
+    display only the highest-priority edges to maintain readable labels.
     """
     if edges.empty:
         return
@@ -205,39 +310,49 @@ def plot_network(edges: pd.DataFrame, title: str, pdf: PdfPages, difference: boo
         return
     tfs = sorted({r.tf for r in shown.itertuples(index=False)})
     targets = sorted(set(graph.nodes).difference(tfs))
-    # Graphviz dot provides non-overlapping, left-to-right TF -> target layers.
-    # A deterministic bipartite fallback keeps the script dependency-free.
-    graph.graph.update(rankdir="LR", nodesep="0.55", ranksep="2.0")
-    try:
-        pos = nx.nx_pydot.graphviz_layout(graph, prog="dot")
-    except Exception:
-        pos = {}
-        for i, node in enumerate(tfs): pos[node] = (0, -i)
-        for i, node in enumerate(targets): pos[node] = (3, -i)
-    height = max(7.5, 0.30 * max(len(tfs), len(targets), 1))
-    fig, ax = plt.subplots(figsize=(13.5, height)); ax.axis("off")
+    undirected = graph.to_undirected()
+    n_nodes = graph.number_of_nodes()
+    # Force-directed layout clusters strongly connected modules; post-layout
+    # repulsion increases the separation of squares, circles, and their labels.
+    pos = _compact_component_layout(undirected)
+    communities = _network_communities(graph)
+    height = max(9.0, min(14.0, 6.7 + 0.13 * n_nodes))
+    fig, ax = plt.subplots(figsize=(15.5, height))
+    ax.set_axis_off()
+    _draw_module_backgrounds(ax, pos, communities)
     if difference:
         values = shown.groupby("target")["delta_rho"].median().to_dict()
-        colors = ["#c53b53" if values.get(n, 0) >= 0 else "#3c8dbc" for n in targets]
         target_label = "Target (red: stronger in comparison; blue: stronger in reference)"
     else:
         values = shown.groupby("target")["target_rho"].median().to_dict()
-        colors = ["#c53b53" if values.get(n, 0) >= 0 else "#3c8dbc" for n in targets]
         target_label = "Target (red: positive; blue: negative response association)"
-    nx.draw_networkx_edges(
-        graph, pos, ax=ax, alpha=.38, arrows=True, arrowsize=9,
-        width=[0.7 + 2.4 * graph[u][v]["weight"] for u, v in graph.edges],
-        edge_color="#555555", connectionstyle="arc3,rad=0.04",
-    )
-    nx.draw_networkx_nodes(graph, pos, nodelist=tfs, node_shape="s", node_size=540,
-                           node_color="#374f8b", edgecolors="white", linewidths=.8, ax=ax, label="TF")
-    nx.draw_networkx_nodes(graph, pos, nodelist=targets, node_size=260,
-                           node_color=colors, edgecolors="white", linewidths=.7, ax=ax, label=target_label)
-    nx.draw_networkx_labels(graph, pos, font_size=7.2, font_family="DejaVu Sans", ax=ax,
-                            bbox={"facecolor": "white", "alpha": .72, "edgecolor": "none", "pad": .15})
-    ax.set_title(f"{title}\nDisplayed top {len(shown)} edges; complete network is provided in CSV/GraphML", fontsize=12, fontweight="bold", pad=14)
-    ax.legend(frameon=False, fontsize=8, loc="upper left")
-    fig.tight_layout(pad=1.0); pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
+    target_colors = ["#c53b53" if values.get(node, 0) >= 0 else "#3c8dbc" for node in targets]
+    edge_widths = [0.9 + 2.9 * graph[u][v]["weight"] for u, v in graph.edges]
+    nx.draw_networkx_edges(graph, pos, ax=ax, alpha=.54, arrows=True, arrowsize=13,
+                           width=edge_widths, edge_color="#315b67", connectionstyle="arc3,rad=0.035",
+                           min_source_margin=12, min_target_margin=12)
+    tf_sizes = [850 + 120 * graph.degree(node) for node in tfs]
+    target_sizes = [580 + 95 * graph.degree(node) for node in targets]
+    nx.draw_networkx_nodes(graph, pos, nodelist=tfs, node_shape="s", node_size=tf_sizes,
+                           node_color="#374f8b", edgecolors="white", linewidths=1.25, ax=ax)
+    nx.draw_networkx_nodes(graph, pos, nodelist=targets, node_shape="o", node_size=target_sizes,
+                           node_color=target_colors, edgecolors="white", linewidths=1.15, ax=ax)
+    nx.draw_networkx_labels(graph, pos, font_size=10.2, font_family="DejaVu Sans", font_weight="medium", ax=ax,
+                            bbox={"facecolor": "white", "alpha": .78, "edgecolor": "none", "pad": .24})
+    handles = [
+        Line2D([0], [0], marker="s", color="none", markerfacecolor="#374f8b", markeredgecolor="white", markersize=13, label="TF"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor="#c53b53", markeredgecolor="white", markersize=12, label=target_label),
+    ]
+    ax.legend(handles=handles, frameon=False, fontsize=10.5, loc="upper left", borderaxespad=.8, handletextpad=.55)
+    ax.set_title(f"{title}\nModular force-directed network; displayed top {len(shown)} edges", fontsize=17, fontweight="bold", pad=18)
+    coords = np.asarray(list(pos.values()), dtype=float)
+    x_pad = max(1.3, .16 * np.ptp(coords[:, 0])); y_pad = max(1.3, .20 * np.ptp(coords[:, 1]))
+    ax.set_xlim(coords[:, 0].min() - x_pad, coords[:, 0].max() + x_pad)
+    ax.set_ylim(coords[:, 1].min() - y_pad, coords[:, 1].max() + y_pad)
+    fig.tight_layout(pad=1.1)
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
 def differential_edges(reference: pd.DataFrame, comparison: pd.DataFrame, group_a: str, group_b: str, n_a: int, n_b: int):
     a = reference[["tf", "target", "target_rho", "target_q_value"]].rename(columns={"target_rho": "rho_reference", "target_q_value": "q_reference"})
     b = comparison[["tf", "target", "target_rho", "target_q_value"]].rename(columns={"target_rho": "rho_comparison", "target_q_value": "q_comparison"})
@@ -271,7 +386,7 @@ def main():
     parser.add_argument("--min-cells", type=int, default=30); parser.add_argument("--min-patients", type=int, default=5)
     parser.add_argument("--min-abs-rho", type=float, default=.50); parser.add_argument("--max-q", type=float, default=.10); parser.add_argument("--max-edges", type=int, default=80)
     parser.add_argument("--make-pdf", action="store_true", help="Write multi-page PDF network atlases; use --cytokines first for a focused inspection.")
-    parser.add_argument("--plot-max-edges", type=int, default=35, help="Maximum edges shown on each PDF page; all retained edges remain in CSV/GraphML.")
+    parser.add_argument("--plot-max-edges", type=int, default=35, help="Maximum edges shown on each PDF page; all retained edges remain in CSV tables.")
     args = parser.parse_args()
     out = Path(args.outdir); out.mkdir(parents=True, exist_ok=True)
     adata = ad.read_h5ad(args.h5ad)
@@ -332,14 +447,24 @@ def main():
     diffs = pd.concat(diff_tables, ignore_index=True) if diff_tables else pd.DataFrame()
     diffs.to_csv(out / "Bcell_subtype_cytokine_network_group_differences.csv", index=False)
     if args.make_pdf and not edges.empty:
-        with PdfPages(out / "Bcell_subtype_cytokine_group_network_atlas.pdf") as pdf:
-            for (cytokine, celltype, group), e in edges.groupby(["cytokine", "cell_type", "group"], sort=True):
-                plot_network(e, f"{cytokine} response | {celltype} | {group}", pdf, max_plot_edges=args.plot_max_edges)
+        # Export one editable PDF per B-cell subtype rather than one atlas that
+        # mixes all subtypes.  Each file contains every retained cytokine and group
+        # for that subtype, making it suitable for cell-type-specific review.
+        atlas_dir = out / "network_atlas_by_cell_type"
+        atlas_dir.mkdir(parents=True, exist_ok=True)
+        for celltype, subtype_edges in edges.groupby("cell_type", sort=True):
+            pdf_path = atlas_dir / f"{safe_name(celltype)}_all_cytokines_group_networks.pdf"
+            with PdfPages(pdf_path) as pdf:
+                for (cytokine, group), e in subtype_edges.groupby(["cytokine", "group"], sort=True):
+                    plot_network(e, f"{cytokine} response | {celltype} | {group}", pdf, max_plot_edges=args.plot_max_edges)
         if not diffs.empty:
-            with PdfPages(out / "Bcell_subtype_cytokine_network_group_difference_atlas.pdf") as pdf:
-                for (cytokine, celltype, ref, comp), d in diffs.groupby(["cytokine", "cell_type", "reference_group", "comparison_group"], sort=True):
-                    selected = d.loc[d["delta_q_value"].le(args.max_q)].head(args.max_edges)
-                    if not selected.empty: plot_network(selected, f"{cytokine} | {celltype} | {comp} vs {ref}", pdf, difference=True, max_plot_edges=args.plot_max_edges)
+            for celltype, subtype_diffs in diffs.groupby("cell_type", sort=True):
+                pdf_path = atlas_dir / f"{safe_name(celltype)}_all_cytokines_group_difference_networks.pdf"
+                with PdfPages(pdf_path) as pdf:
+                    for (cytokine, ref, comp), d in subtype_diffs.groupby(["cytokine", "reference_group", "comparison_group"], sort=True):
+                        selected = d.loc[d["delta_q_value"].le(args.max_q)].head(args.max_edges)
+                        if not selected.empty:
+                            plot_network(selected, f"{cytokine} | {celltype} | {comp} vs {ref}", pdf, difference=True, max_plot_edges=args.plot_max_edges)
     print(f"Completed {len(scores)} response scores, {len(edges)} group-specific regulatory edges, and {len(diffs)} differential edges. Results: {out}")
 
 if __name__ == "__main__":

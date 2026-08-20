@@ -19,7 +19,7 @@
 
 ## Network atlas
 
-- Patient × B-subtype response score table; complete gene–response associations; retained TF→target edges; group-difference edges; network PDF/GraphML when requested.
+- Patient × B-subtype response score table; complete gene–response associations; retained TF→target edges; group-difference edges; one editable network PDF per B-cell subtype (all cytokines and groups) when requested.
 
 ## Trajectory
 

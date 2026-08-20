@@ -44,5 +44,5 @@ where = ["src"]
 include = ["sccrs*"]
 
 [tool.setuptools.package-data]
-sccrs = ["r/*.R", "resources/*.csv"]
+sccrs = ["r/*.R", "resources/*.csv", "resources/regulatory_networks/*.tsv", "resources/regulatory_networks/*.md"]
 

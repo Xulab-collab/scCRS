@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#375A7F"/></marker>
+    <marker id="arrow-dashed" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#7D5BA6"/></marker>
+    <style>
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 31px; font-weight: 700; fill: #172B4D; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 16px; fill: #4C6479; }
+      .section { font-family: Arial, Helvetica, sans-serif; font-size: 17px; font-weight: 700; fill: #172B4D; letter-spacing: .6px; }
+      .boxTitle { font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 700; fill: #172B4D; }
+      .boxText { font-family: Arial, Helvetica, sans-serif; font-size: 14px; fill: #243B53; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 12px; fill: #486581; }
+      .outTitle { font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: 700; fill: #172B4D; }
+      .outText { font-family: Arial, Helvetica, sans-serif; font-size: 13px; fill: #243B53; }
+      .arrow { stroke: #375A7F; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .dash { stroke: #7D5BA6; stroke-width: 2.3; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrow-dashed); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1050" fill="#FFFFFF"/>
+  <text x="800" y="55" text-anchor="middle" class="title">scCRS: Cytokine-response signature scoring for single-cell sequencing</text>
+  <text x="800" y="83" text-anchor="middle" class="subtitle">A modular framework to quantify cytokine-response programmes and link them to immune states, composition, regulatory networks and differentiation trajectories</text>
+
+  <text x="65" y="130" class="section">INPUTS</text>
+  <rect x="55" y="145" width="435" height="158" rx="16" fill="#E7F2FA" stroke="#4C8DBA" stroke-width="2"/>
+  <text x="80" y="180" class="boxTitle">Single-cell transcriptomic data</text>
+  <text x="80" y="211" class="boxText">• h5ad / Seurat object / Monocle3 CDS</text>
+  <text x="80" y="236" class="boxText">• RNA counts or normalized expression</text>
+  <text x="80" y="261" class="boxText">• patient, group and cell-type metadata</text>
+  <text x="80" y="286" class="boxText">• UMAP and optional pseudotime graph</text>
+
+  <rect x="585" y="145" width="435" height="158" rx="16" fill="#E9F7EE" stroke="#4C9D69" stroke-width="2"/>
+  <text x="610" y="180" class="boxTitle">Cytokine-response dictionary</text>
+  <text x="610" y="211" class="boxText">• cytokine × responding cell type</text>
+  <text x="610" y="236" class="boxText">• positive (up) and negative (down) genes</text>
+  <text x="610" y="261" class="boxText">• gene weights and coverage assessment</text>
+  <text x="610" y="286" class="boxText">• human cytokine perturbation signatures</text>
+
+  <rect x="1115" y="145" width="435" height="158" rx="16" fill="#FFF3E6" stroke="#D9893D" stroke-width="2"/>
+  <text x="1140" y="180" class="boxTitle">Optional regulatory priors</text>
+  <text x="1140" y="211" class="boxText">• CollecTRI / DoRothEA TF → target edges</text>
+  <text x="1140" y="236" class="boxText">• HumanNet and cisTarget motif evidence</text>
+  <text x="1140" y="261" class="boxText">• cell-type- and group-specific context</text>
+
+  <path class="arrow" d="M272 304 L272 365 L800 365 L800 408"/>
+  <path class="arrow" d="M802 304 L802 408"/>
+  <path class="arrow" d="M1332 304 L1332 365 L800 365"/>
+
+  <text x="65" y="400" class="section">CORE scCRS SCORING</text>
+  <rect x="315" y="420" width="970" height="165" rx="20" fill="#F3EEFA" stroke="#7D5BA6" stroke-width="2.5"/>
+  <text x="800" y="458" text-anchor="middle" class="boxTitle">Cell-type-aware signed UCell cytokine-response scoring</text>
+  <text x="800" y="491" text-anchor="middle" class="boxText">Gene ranks are calculated per cell; positive response genes increase the score and negative response genes decrease it.</text>
+  <text x="800" y="518" text-anchor="middle" class="boxText">Output: per-cell cytokine-response scores, gene coverage, and normalized 0–100 response metrics.</text>
+  <rect x="490" y="540" width="620" height="25" rx="12" fill="#D9CBE9"/>
+  <text x="800" y="558" text-anchor="middle" class="small">signed rank-based enrichment  •  robust to sequencing depth  •  interpretable by cytokine and cell type</text>
+
+  <path class="arrow" d="M800 585 L800 640"/>
+
+  <text x="65" y="635" class="section">MULTI-SCALE ANALYSIS</text>
+  <rect x="60" y="655" width="285" height="160" rx="15" fill="#E7F2FA" stroke="#4C8DBA" stroke-width="2"/>
+  <text x="202" y="691" text-anchor="middle" class="outTitle">Patient-level response</text>
+  <text x="82" y="721" class="outText">• aggregate across immune cells</text>
+  <text x="82" y="746" class="outText">• group comparison and statistics</text>
+  <text x="82" y="771" class="outText">• row-z-score heatmap</text>
+  <text x="82" y="796" class="outText">• cytokine ranking</text>
+
+  <rect x="365" y="655" width="285" height="160" rx="15" fill="#E9F7EE" stroke="#4C9D69" stroke-width="2"/>
+  <text x="507" y="691" text-anchor="middle" class="outTitle">Cell-type-specific response</text>
+  <text x="387" y="721" class="outText">• patient × cell-type scoring</text>
+  <text x="387" y="746" class="outText">• group-wise violin / bar plots</text>
+  <text x="387" y="771" class="outText">• Wilcoxon tests and BH-FDR</text>
+  <text x="387" y="796" class="outText">• IFN-axis response panels</text>
+
+  <rect x="670" y="655" width="285" height="160" rx="15" fill="#FFF3E6" stroke="#D9893D" stroke-width="2"/>
+  <text x="812" y="691" text-anchor="middle" class="outTitle">State and composition</text>
+  <text x="692" y="721" class="outText">• T/B-cell state signatures</text>
+  <text x="692" y="746" class="outText">• cytokine–state correlations</text>
+  <text x="692" y="771" class="outText">• cytokine–cell proportion links</text>
+  <text x="692" y="796" class="outText">• Spearman statistics and plots</text>
+
+  <rect x="975" y="655" width="285" height="160" rx="15" fill="#FBE9EF" stroke="#C75B7A" stroke-width="2"/>
+  <text x="1117" y="691" text-anchor="middle" class="outTitle">Regulatory network atlas</text>
+  <text x="997" y="721" class="outText">• B-cell subtype pseudobulk</text>
+  <text x="997" y="746" class="outText">• TF–target prior-constrained edges</text>
+  <text x="997" y="771" class="outText">• group-differential networks</text>
+  <text x="997" y="796" class="outText">• modular vector PDF/SVG</text>
+
+  <rect x="1280" y="655" width="285" height="160" rx="15" fill="#F3EEFA" stroke="#7D5BA6" stroke-width="2"/>
+  <text x="1422" y="691" text-anchor="middle" class="outTitle">Trajectory coupling</text>
+  <text x="1302" y="721" class="outText">• Monocle3 pseudotime branches</text>
+  <text x="1302" y="746" class="outText">• patient × pseudotime-bin GAM</text>
+  <text x="1302" y="771" class="outText">• PCRS and branch comparison</text>
+  <text x="1302" y="796" class="outText">• UMAP response-field maps</text>
+
+  <path class="arrow" d="M800 585 L800 620 L202 620 L202 654"/>
+  <path class="arrow" d="M800 585 L800 620 L507 620 L507 654"/>
+  <path class="arrow" d="M800 585 L800 620 L812 620 L812 654"/>
+  <path class="arrow" d="M800 585 L800 620 L1117 620 L1117 654"/>
+  <path class="arrow" d="M800 585 L800 620 L1422 620 L1422 654"/>
+
+  <text x="65" y="870" class="section">INTERPRETATION AND VALIDATION</text>
+  <rect x="155" y="890" width="1290" height="108" rx="17" fill="#F7F9FB" stroke="#A6B7C8" stroke-width="2"/>
+  <text x="800" y="925" text-anchor="middle" class="boxTitle">Hypothesis-generating, multi-layered cytokine-response framework</text>
+  <text x="800" y="954" text-anchor="middle" class="boxText">scCRS measures transcriptional similarity to cytokine perturbation signatures; it does not measure cytokine abundance or prove direct causality.</text>
+  <text x="800" y="979" text-anchor="middle" class="boxText">Prioritize cytokines, cell states and TF modules for validation by cytokine stimulation, receptor blockade, longitudinal sampling or Perturb-seq.</text>
+
+  <path class="dash" d="M202 815 L202 870"/>
+  <path class="dash" d="M507 815 L507 870"/>
+  <path class="dash" d="M812 815 L812 870"/>
+  <path class="dash" d="M1117 815 L1117 870"/>
+  <path class="dash" d="M1422 815 L1422 870"/>
+</svg>

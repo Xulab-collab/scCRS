@@ -2,6 +2,8 @@
 
 **scCRS (Cytokine-response signature scoring for single-cell sequencing)** is a modular workflow for inferring cell-type-resolved cytokine-response programmes from scRNA-seq data and connecting those programmes to cell composition, T/B-cell states, B-cell regulatory networks, and Monocle3 pseudotime trajectories.
 
+![scCRS workflow](docs/figures/scCRS_workflow.svg)
+
 > **Research use only.** scCRS measures transcriptional similarity to a cytokine-response signature. It is not a cytokine concentration, receptor-occupancy measurement, or proof that a cytokine causally drives a cell state, regulatory edge, or differentiation process.
 
 ## Modules
@@ -17,16 +19,8 @@
 ## Installation
 
 ```bash
-
-
 git clone https://github.com/Xulab-collab/scCRS.git
 cd scCRS
-conda create -n sccrs python=3.10 -y
-conda activate sccrs
-pip install -e .
-# Optional Graphviz executable for dot layout:
-conda install -c conda-forge graphviz
-
 python -m venv .venv
 source .venv/bin/activate              # Linux/macOS
 # .venv\Scripts\Activate.ps1          # Windows PowerShell
@@ -109,10 +103,10 @@ sccrs-state-scatter   --data results/state_association/state_cytokine_merged_dat
 
 ### 4. B-cell cytokine-response regulatory networks
 
-Download a TF-target prior before running (The relevant data is stored at https://zenodo.org/records/21971583). A CollecTRI/DoRothEA high-confidence TSV is supported directly; cite both resources in downstream work.
+A reproducibility snapshot of the CollecTRI/DoRothEA TF-target prior is bundled at `resources/regulatory_networks/CollecTRI_DoRothEA_A-C.tsv`; see `resources/regulatory_networks/NOTICE.md` for provenance, checksum and external-data license notes. Cite original resources in downstream work. HumanNet and cisTarget motif databases are not redistributed; provide local paths if extending the workflow.
 
 ```bash
-sccrs-bcell-network   --h5ad Bcells_filtered.h5ad   --signatures resources/Cytokine_Signatures_Human_All_CellTypes.csv   --tf-target-prior regulatory_network_resources/CollecTRI_DoRothEA_A-C.tsv   --outdir results/bcell_network   --patient-col orig.ident --celltype-col cell_type --group-col group   --layer raw --signature-celltype B_cell   --min-cells 30 --min-patients 5 --min-abs-rho 0.50 --max-q 0.10   --make-pdf
+sccrs-bcell-network   --h5ad Bcells_filtered.h5ad   --signatures resources/Cytokine_Signatures_Human_All_CellTypes.csv   --tf-target-prior resources/regulatory_networks/CollecTRI_DoRothEA_A-C.tsv   --outdir results/bcell_network   --patient-col orig.ident --celltype-col cell_type --group-col group   --layer raw --signature-celltype B_cell   --min-cells 30 --min-patients 5 --min-abs-rho 0.50 --max-q 0.10   --make-pdf
 ```
 
 Use `--pooled` to analyse all patients together. Use `--compare "Normal:HGG,Non-HGG:HGG"` for prespecified group comparisons. Network edges are *prior-supported, response-associated candidates*, not direct regulatory proof.

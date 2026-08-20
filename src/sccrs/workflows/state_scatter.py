@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
@@ -47,6 +49,44 @@ def safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_")
 
 
+def configure_editable_font(font_family: str, font_file: str | None) -> str:
+    """Register a system font with Matplotlib, including fontconfig-only fonts."""
+    candidates = [Path(font_file)] if font_file else []
+    if not candidates:
+        try:
+            query = subprocess.run(
+                ["fc-match", "-f", "%{file}\n", font_family],
+                check=True, capture_output=True, text=True,
+            )
+            candidates = [Path(line.strip()) for line in query.stdout.splitlines() if line.strip()]
+        except (OSError, subprocess.SubprocessError):
+            candidates = []
+    for candidate in candidates:
+        if candidate.is_file():
+            font_manager.fontManager.addfont(str(candidate))
+            resolved = font_manager.FontProperties(fname=str(candidate)).get_name()
+            plt.rcParams.update({
+                "font.family": resolved,
+                "font.sans-serif": [resolved, font_family, "Arial", "DejaVu Sans"],
+                "pdf.fonttype": 42,
+                "ps.fonttype": 42,
+                "pdf.use14corefonts": False,
+                "svg.fonttype": "none",
+            })
+            print(f"Using editable font: {resolved} ({candidate})")
+            return resolved
+    plt.rcParams.update({
+        "font.family": font_family,
+        "font.sans-serif": [font_family, "Arial", "DejaVu Sans"],
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "pdf.use14corefonts": False,
+        "svg.fonttype": "none",
+    })
+    print(f"Warning: could not register '{font_family}'. Use --font-file /absolute/path/to/arial.ttf for an exact font.")
+    return font_family
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Draw selected patient-level cytokine-response/state scatter plots."
@@ -63,8 +103,13 @@ def main() -> None:
     parser.add_argument("--cytokine-score-col", default="raw_rank_score")
     parser.add_argument("--color-by", default="group",
                         help="Column used for point colour; set to empty string to disable")
-    parser.add_argument("--point-size", type=float, default=58)
+    parser.add_argument("--point-size", type=float, default=72)
+    parser.add_argument("--font-family", default="Arial", help="Preferred PDF/figure font.")
+    parser.add_argument("--font-file", default=None, help="Optional absolute .ttf/.otf path; overrides fontconfig lookup.")
     args = parser.parse_args()
+
+    # Register the font in Matplotlib itself, then embed TrueType in PDF.
+    configure_editable_font(args.font_family, args.font_file)
 
     cytokines, cell_types, states = values(args.cytokine), values(args.cell_type), values(args.state)
     data = read_csv(args.data)
@@ -104,7 +149,7 @@ def main() -> None:
     n_panels = len(combinations)
     n_cols = min(3, n_panels)
     n_rows = int(np.ceil(n_panels / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4.4 * n_cols, 4.0 * n_rows), squeeze=False)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.3 * n_cols, 4.8 * n_rows), squeeze=False)
     for ax, (key, table) in zip(axes.ravel(), combinations):
         table = table.dropna(subset=["state_rank_score", args.cytokine_score_col]).copy()
         colour_column = args.color_by if args.color_by and args.color_by in table.columns else None
@@ -115,7 +160,7 @@ def main() -> None:
                 ax.scatter(subset["state_rank_score"], subset[args.cytokine_score_col],
                            s=args.point_size, color=GROUP_COLORS.get(level, "#666666"),
                            edgecolor="white", linewidth=0.7, alpha=0.9, label=level)
-            ax.legend(title=colour_column, frameon=False, fontsize=8, title_fontsize=8, loc="best")
+            ax.legend(title=colour_column, frameon=False, fontsize=11, title_fontsize=11, loc="best")
         else:
             ax.scatter(table["state_rank_score"], table[args.cytokine_score_col],
                        s=args.point_size, color="#3B75AF", edgecolor="white", linewidth=0.7, alpha=0.9)
@@ -127,12 +172,13 @@ def main() -> None:
             ax.plot(x_line, slope * x_line + intercept, color="#222222", linewidth=1.4, zorder=0)
         row = statistics.loc[(statistics.cell_type == key[0]) & (statistics.state == key[1]) & (statistics.cytokine == key[2])].iloc[0]
         rho_text = "NA" if pd.isna(row.spearman_rho) else f"{row.spearman_rho:.2f}"
-        p_text = "NA" if pd.isna(row.p_value) else f"{row.p_value:.3g}"
-        ax.set_title(f"{key[0]} | {key[1]} | {key[2]}", fontsize=10, fontweight="bold")
-        ax.text(0.03, 0.97, f"Spearman r = {rho_text}\\nP = {p_text}; n = {int(row.n_patients)}",
-                transform=ax.transAxes, va="top", ha="left", fontsize=9)
-        ax.set_xlabel("Cell-state rank score")
-        ax.set_ylabel(f"scCRS {key[2]} response score")
+        ax.set_title(f"{key[0]} | {key[1]} | {key[2]}", fontsize=14, fontweight="bold", pad=10)
+        # Retain only the effect-size annotation; P values and sample counts are in the CSV output.
+        ax.text(0.03, 0.97, f"Spearman r = {rho_text}",
+                transform=ax.transAxes, va="top", ha="left", fontsize=13, fontweight="bold")
+        ax.set_xlabel("Cell-state rank score", fontsize=13, fontweight="bold")
+        ax.set_ylabel(f"scCRS {key[2]} response score", fontsize=13, fontweight="bold")
+        ax.tick_params(axis="both", labelsize=11, width=1.1)
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(False)
     for ax in axes.ravel()[n_panels:]:

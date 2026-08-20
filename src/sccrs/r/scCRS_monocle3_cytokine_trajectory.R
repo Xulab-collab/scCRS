@@ -37,7 +37,17 @@ opts <- list(
   make_option("--umap-alpha", dest="umap_alpha", type="double", default=0.80, help="Point opacity for UMAP response maps"),
   make_option("--color-q-low", dest="color_q_low", type="double", default=0.00, help="Lower response-score quantile for UMAP color limits"),
   make_option("--color-q-high", dest="color_q_high", type="double", default=0.995, help="Upper response-score quantile for UMAP color limits; values above are saturated"),
-  make_option("--umap-color-transform", dest="umap_color_transform", type="character", default="sqrt", help="Color transform: sqrt, identity, or log10")
+  make_option("--umap-color-transform", dest="umap_color_transform", type="character", default="sqrt", help="Color transform: sqrt, identity, or log10"),
+  make_option("--make-response-field", dest="make_response_field", action="store_true", default=FALSE, help="Export UMAP kernel-smoothed response-potential fields. Arrows indicate local score-gradient direction, not a causal perturbation force."),
+  make_option("--field-grid", dest="field_grid", type="integer", default=50, help="Grid resolution per UMAP axis for response-potential fields"),
+  make_option("--field-bandwidth", dest="field_bandwidth", type="double", default=NULL, help="Gaussian smoothing bandwidth in UMAP units; default is 8% of the mean UMAP span"),
+  make_option("--field-max-cells", dest="field_max_cells", type="integer", default=6000, help="Maximum cells used to estimate each response field (random subsample for speed)"),
+  make_option("--field-min-density", dest="field_min_density", type="double", default=0.08, help="Keep arrows only where relative kernel density is at least this value"),
+  make_option("--field-arrow-stride", dest="field_arrow_stride", type="integer", default=4, help="Plot every Nth eligible grid location as a response-field arrow"),
+  make_option("--make-density-vector-map", dest="make_density_vector_map", action="store_true", default=FALSE, help="Export UMAP kernel-smoothed mean-response heatmaps with local response-gradient arrows. The historical option name is retained for compatibility; this remains descriptive, not a causal perturbation prediction."),
+  make_option("--heatmap-min-density", dest="heatmap_min_density", type="double", default=0.05, help="Minimum relative cell density required to display a mean-response heatmap pixel; low-support UMAP regions are masked to prevent boundary extrapolation artifacts."),
+  make_option("--heatmap-bandwidth-factor", dest="heatmap_bandwidth_factor", type="double", default=0.05, help="When --field-bandwidth is not supplied, heatmap Gaussian bandwidth as a fraction of mean UMAP span. Smaller values yield tighter contours."),
+  make_option("--heatmap-highlight-quantile", dest="heatmap_highlight_quantile", type="double", default=0.95, help="Overlay cells at or above this within-map raw UCell-score quantile so small high-response populations remain visible.")
 )
 opt <- parse_args(OptionParser(option_list=opts))
 required <- c("cds", "signatures", "root_label", "branch1_label", "branch2_label")
@@ -84,7 +94,15 @@ closest_vertex <- function(cds, cell_ids) {
   }
   out
 }
-safe_name <- function(x) gsub("[^A-Za-z0-9._-]+", "_", x)
+safe_name <- function(x) {
+  # Preserve common cytokine Greek letters in filenames. The former ASCII-only
+  # sanitizer mapped beta, gamma, epsilon and kappa all to "_", overwriting
+  # their individual PDF/SVG exports (for example, IFN-beta and IFN-gamma).
+  from <- c("\u03b1", "\u03b2", "\u03b3", "\u03b4", "\u03b5", "\u03ba", "\u03bb")
+  to <- c("alpha", "beta", "gamma", "delta", "epsilon", "kappa", "lambda")
+  for (i in seq_along(from)) x <- gsub(from[i], to[i], x, fixed=TRUE)
+  gsub("[^A-Za-z0-9._-]+", "_", x)
+}
 
 cds <- read_r_object(opt$cds, "cell_data_set")
 if (is.null(principal_graph(cds)[["UMAP"]]) || is.null(principal_graph_aux(cds)[["UMAP"]]$pr_graph_cell_proj_closest_vertex)) {
@@ -280,19 +298,42 @@ make_trajectory_curve <- function(b, n_points=60) {
   data.frame(branch=b, order=seq_along(pred_t), node_start=z$node[1], node_end=z$node[nrow(z)], x=xx, y=yy)
 }
 
-if (is.null(opt$vector_cytokines)) vector_cytokines <- stats %>% group_by(cytokine) %>% summarise(x=max(abs(PCRS)),.groups="drop") %>% arrange(desc(x)) %>% slice_head(n=6) %>% pull(cytokine) else vector_cytokines <- trimws(unlist(strsplit(opt$vector_cytokines,",")))
-# By default UMAPs are limited to --vector-cytokines. This avoids exporting a
-# large panel of cytokines that were not selected for the trajectory comparison.
-if (tolower(trimws(opt$umap_cytokines)) %in% c("vector","selected")) {
-  umap_cytokines <- intersect(vector_cytokines, cytokines)
-} else if (tolower(trimws(opt$umap_cytokines)) %in% c("all","*")) {
+# Keep the user-specified vector list intact and audit it explicitly. A cytokine
+# is only unavailable when its requested B-cell signature has no matched gene;
+# a missing GAM fit must never suppress its UMAP / response-field export.
+if (is.null(opt$vector_cytokines)) {
+  vector_cytokines <- stats %>% group_by(cytokine) %>% summarise(x=max(abs(PCRS)), .groups="drop") %>% arrange(desc(x)) %>% slice_head(n=6) %>% pull(cytokine)
+} else {
+  vector_cytokines <- trimws(unlist(strsplit(opt$vector_cytokines, ",", fixed=TRUE)))
+}
+vector_cytokines <- unique(vector_cytokines[nzchar(vector_cytokines)])
+if (!length(vector_cytokines)) stop("No cytokines were supplied through --vector-cytokines.")
+missing_vector_signature <- setdiff(vector_cytokines, cytokines)
+if (length(missing_vector_signature)) warning("These --vector-cytokines have no usable matched signature and cannot be plotted: ", paste(missing_vector_signature, collapse=", "))
+available_vector_cytokines <- intersect(vector_cytokines, cytokines)
+# By default every available --vector-cytokines member is exported. Do not use
+# the GAM/PCRS table as a filter: maps are still valid descriptive score maps
+# when a branch model cannot be fitted.
+if (tolower(trimws(opt$umap_cytokines)) %in% c("vector", "selected")) {
+  umap_cytokines <- available_vector_cytokines
+} else if (tolower(trimws(opt$umap_cytokines)) %in% c("all", "*")) {
   umap_cytokines <- cytokines
 } else {
-  umap_cytokines <- trimws(unlist(strsplit(opt$umap_cytokines,",")))
+  umap_cytokines <- unique(trimws(unlist(strsplit(opt$umap_cytokines, ",", fixed=TRUE))))
   missing_umap <- setdiff(umap_cytokines, cytokines)
   if (length(missing_umap)) warning("Requested UMAP cytokines not available after signature filtering: ", paste(missing_umap, collapse=", "))
   umap_cytokines <- intersect(umap_cytokines, cytokines)
 }
+if (!length(umap_cytokines)) stop("No requested cytokines have usable matched signatures for UMAP export.")
+export_manifest <- data.frame(
+  cytokine=vector_cytokines,
+  requested_in_vector_cytokines=TRUE,
+  signature_score_available=vector_cytokines %in% cytokines,
+  included_in_default_umap_export=vector_cytokines %in% umap_cytokines,
+  GAM_path_stat_available=vector_cytokines %in% stats$cytokine,
+  stringsAsFactors=FALSE
+)
+write.csv(export_manifest, file.path(opt$outdir, "UMAP_cytokine_export_manifest.csv"), row.names=FALSE)
 # One comparison figure for the selected cytokines: both branch GAM curves in each panel.
 curve_plot <- curves %>% filter(cytokine %in% vector_cytokines) %>% group_by(cytokine, branch) %>% mutate(normalized_pseudotime=(pseudotime-min(pseudotime))/(max(pseudotime)-min(pseudotime))) %>% ungroup()
 if (nrow(curve_plot)) {
@@ -335,14 +376,11 @@ for (cy in umap_cytokines) {
     scale_color_viridis_c(name="UCell cytokine\nresponse",limits=color_limits,oob=scales::squish,trans=opt$umap_color_transform)
   selected <- best_path[best_path$cytokine==cy,,drop=FALSE]
   has_response_trajectory <- FALSE
-  trajectory_legend_label <- "Cytokine-response-associated\ndifferentiation direction (candidate)"
+  trajectory_legend_label <- "Monocle3 root-to-terminal\npseudotime branch (inferred)"
   if (nrow(selected)) {
     b <- selected$selected_branch[1]
     lc <- long_curves[long_curves$branch==b,,drop=FALSE]
-    # Reversing the drawn order when PCRS < 0 makes the arrow point toward the
-    # high-response end while remaining constrained to the same cellular branch.
     if (nrow(lc) >= 3) {
-      if (selected$PCRS[1] < 0) lc <- lc[rev(seq_len(nrow(lc))),,drop=FALSE]
       p <- p + geom_path(data=lc,aes(x=x,y=y,linetype=trajectory_legend_label),inherit.aes=FALSE,color=line_colors[[b]],linewidth=1.35,alpha=.98,show.legend=TRUE)
       has_response_trajectory <- TRUE
       tip <- lc[nrow(lc),,drop=FALSE]; prev <- lc[nrow(lc)-1,,drop=FALSE]
@@ -350,7 +388,7 @@ for (cy in umap_cytokines) {
     }
     display_branch <- if (b=="branch1") opt$branch1_name else opt$branch2_name
     direction_text <- if (selected$PCRS[1] >= 0) "increasing response with pseudotime" else "increasing response toward the root"
-    subtitle_text <- paste0("Single smooth curve: ",display_branch," (largest |PCRS| across the two paths; ",direction_text,"). Arrow points toward the higher response end.")
+    subtitle_text <- paste0("Observed Monocle3 branch: ",display_branch," (largest |PCRS| across the two paths; ",direction_text,"). Arrow follows root-to-terminal pseudotime; response increase or decrease is reported separately by PCRS.")
   } else {
     subtitle_text <- "No eligible GAM/PCRS result for either path; no response-enhancing curve was drawn."
   }
@@ -369,5 +407,222 @@ for (cy in umap_cytokines) {
 }
 grDevices::dev.off()
 write.csv(bind_rows(all_arrows),file.path(opt$outdir,"UMAP_response_aligned_vector_coordinates.csv"),row.names=FALSE)
+
+# Optional descriptive response-potential field. This is deliberately not a
+# perturbation-prediction model: it estimates the local gradient of a Gaussian
+# kernel-smoothed single-cell UCell score in the displayed UMAP coordinates.
+# Therefore arrows identify where response-associated transcription increases
+# in the embedding, not cellular motion, a physical force, or causal cytokine action.
+make_response_field <- function(z, cytokine, n_grid=50, bandwidth=NULL, max_cells=6000,
+                                min_density=.08, arrow_stride=4) {
+  z <- z[is.finite(z$UMAP_1) & is.finite(z$UMAP_2) & is.finite(z[[cytokine]]),
+         c("UMAP_1", "UMAP_2", cytokine), drop=FALSE]
+  if (nrow(z) < 50) return(NULL)
+  # Define grid limits from all displayed cells before sampling. Sampling only
+  # speeds kernel estimation and must never contract the plotted UMAP extent.
+  xr <- range(z$UMAP_1); yr <- range(z$UMAP_2)
+  if (nrow(z) > max_cells) {
+    set.seed(20260818)
+    z <- z[sample.int(nrow(z), max_cells), , drop=FALSE]
+  }
+  span_x <- diff(xr); span_y <- diff(yr)
+  if (!is.finite(span_x) || !is.finite(span_y) || span_x <= 0 || span_y <= 0) return(NULL)
+  n_grid <- max(20, as.integer(n_grid))
+  xg <- seq(xr[1], xr[2], length.out=n_grid)
+  yg <- seq(yr[1], yr[2], length.out=n_grid)
+  bw <- if (is.null(bandwidth) || !is.finite(bandwidth) || bandwidth <= 0) {
+    .08 * mean(c(span_x, span_y))
+  } else bandwidth
+  grid_df <- expand.grid(UMAP_1=xg, UMAP_2=yg, KEEP.OUT.ATTRS=FALSE, stringsAsFactors=FALSE)
+  grid_df$ix <- match(grid_df$UMAP_1, xg); grid_df$iy <- match(grid_df$UMAP_2, yg)
+  score <- z[[cytokine]]
+  # Rank weighting makes the density panel show where high-response cells are
+  # concentrated, while avoiding domination by the absolute UCell score scale.
+  score_rank <- rank(score, ties.method="average") / (length(score) + 1)
+  estimate_one <- function(x, y) {
+    w <- exp(-((z$UMAP_1-x)^2 + (z$UMAP_2-y)^2) / (2*bw^2))
+    sw <- sum(w)
+    c(
+      potential=if (sw > 0) sum(w*score)/sw else NA_real_,
+      density=mean(w),
+      response_density=mean(w*score_rank)
+    )
+  }
+  est <- t(vapply(seq_len(nrow(grid_df)), function(i) estimate_one(grid_df$UMAP_1[i], grid_df$UMAP_2[i]), numeric(3)))
+  grid_df$potential <- est[, "potential"]; grid_df$density <- est[, "density"]; grid_df$response_density <- est[, "response_density"]
+  grid_df$relative_density <- grid_df$density / max(grid_df$density, na.rm=TRUE)
+  grid_df$relative_response_density <- grid_df$response_density / max(grid_df$response_density, na.rm=TRUE)
+  pmat <- matrix(grid_df$potential, nrow=length(xg), ncol=length(yg))
+  gx <- matrix(NA_real_, nrow=length(xg), ncol=length(yg)); gy <- gx
+  if (length(xg) > 2) {
+    gx[2:(length(xg)-1), ] <- (pmat[3:length(xg), ] - pmat[1:(length(xg)-2), ]) / (xg[3] - xg[1])
+    gx[1, ] <- (pmat[2, ]-pmat[1, ]) / (xg[2]-xg[1]); gx[length(xg), ] <- (pmat[length(xg), ]-pmat[length(xg)-1, ]) / (xg[length(xg)]-xg[length(xg)-1])
+  }
+  if (length(yg) > 2) {
+    gy[, 2:(length(yg)-1)] <- (pmat[, 3:length(yg)] - pmat[, 1:(length(yg)-2)]) / (yg[3] - yg[1])
+    gy[, 1] <- (pmat[, 2]-pmat[, 1]) / (yg[2]-yg[1]); gy[, length(yg)] <- (pmat[, length(yg)]-pmat[, length(yg)-1]) / (yg[length(yg)]-yg[length(yg)-1])
+  }
+  grid_df$grad_x <- as.vector(gx); grid_df$grad_y <- as.vector(gy)
+  grid_df$magnitude <- sqrt(grid_df$grad_x^2 + grid_df$grad_y^2)
+  keep <- is.finite(grid_df$magnitude) & is.finite(grid_df$relative_density) & grid_df$relative_density >= min_density
+  qmag <- if (any(keep)) as.numeric(quantile(grid_df$magnitude[keep], .90, na.rm=TRUE)) else NA_real_
+  if (!is.finite(qmag) || qmag <= 0) qmag <- 1
+  arrow_length <- .05 * max(span_x, span_y)
+  grid_df$field_dx <- ifelse(keep, arrow_length * pmin(grid_df$magnitude/qmag, 1) * grid_df$grad_x/pmax(grid_df$magnitude, 1e-12), NA_real_)
+  grid_df$field_dy <- ifelse(keep, arrow_length * pmin(grid_df$magnitude/qmag, 1) * grid_df$grad_y/pmax(grid_df$magnitude, 1e-12), NA_real_)
+  grid_df$xend <- grid_df$UMAP_1 + grid_df$field_dx; grid_df$yend <- grid_df$UMAP_2 + grid_df$field_dy
+  arrows <- grid_df[keep & (grid_df$ix %% max(1, arrow_stride) == 1) & (grid_df$iy %% max(1, arrow_stride) == 1), , drop=FALSE]
+  list(grid=grid_df, arrows=arrows, bandwidth=bw, n_cells=nrow(z))
+}
+
+if (isTRUE(opt$make_response_field)) {
+  fdir <- file.path(opt$outdir, "UMAP_response_potential_fields"); dir.create(fdir, showWarnings=FALSE)
+  field_grids <- list()
+  all_field_pdf <- file.path(fdir, "selected_cytokines_UMAP_response_potential_fields.pdf")
+  grDevices::cairo_pdf(all_field_pdf, width=8.7, height=7.0)
+  for (cy in umap_cytokines) {
+    plot_cells <- meta[is.finite(meta$pseudotime), , drop=FALSE]
+    fld <- make_response_field(plot_cells, cy, n_grid=opt$field_grid, bandwidth=opt$field_bandwidth,
+                               max_cells=opt$field_max_cells, min_density=opt$field_min_density,
+                               arrow_stride=opt$field_arrow_stride)
+    if (is.null(fld)) { warning("Response field skipped for ", cy, ": too few valid cells."); next }
+    fld$grid$cytokine <- cy; fld$grid$bandwidth <- fld$bandwidth; fld$grid$n_cells_used <- fld$n_cells
+    field_grids[[cy]] <- fld$grid
+    color_limits <- as.numeric(quantile(plot_cells[[cy]], probs=c(opt$color_q_low, opt$color_q_high), na.rm=TRUE, names=FALSE))
+    if (!all(is.finite(color_limits)) || color_limits[2] <= color_limits[1]) color_limits <- range(plot_cells[[cy]], na.rm=TRUE)
+    p <- ggplot(plot_cells, aes(UMAP_1, UMAP_2, color=.data[[cy]])) +
+      geom_point(size=opt$umap_point_size, alpha=opt$umap_alpha) +
+      scale_color_viridis_c(name="UCell cytokine\nresponse", limits=color_limits, oob=scales::squish, trans=opt$umap_color_transform) +
+      geom_segment(data=fld$arrows, aes(x=UMAP_1, y=UMAP_2, xend=xend, yend=yend, linetype="Local response-potential gradient"),
+                   inherit.aes=FALSE, color="#1A1A1A", linewidth=.42, alpha=.82, arrow=arrow(length=grid::unit(1.5, "mm")), show.legend=TRUE)
+    selected <- best_path[best_path$cytokine == cy, , drop=FALSE]
+    if (nrow(selected)) {
+      b <- selected$selected_branch[1]; lc <- long_curves[long_curves$branch == b, , drop=FALSE]
+      if (nrow(lc) >= 3) {
+        p <- p + geom_path(data=lc, aes(x=x, y=y, linetype="Pseudotime branch with strongest cytokine-response association"),
+                           inherit.aes=FALSE, color=line_colors[[b]], linewidth=1.35, show.legend=TRUE)
+        tip <- lc[nrow(lc), , drop=FALSE]; prev <- lc[nrow(lc)-1, , drop=FALSE]
+        p <- p + geom_segment(data=data.frame(x=prev$x, y=prev$y, xend=tip$x, yend=tip$y), aes(x=x, y=y, xend=xend, yend=yend),
+                              inherit.aes=FALSE, color=line_colors[[b]], linewidth=1.35, arrow=arrow(length=grid::unit(3.4, "mm")))
+      }
+    }
+    p <- p + coord_equal() + theme_classic(base_size=12) +
+      scale_linetype_manual(name="UMAP overlay", values=c("Local response-potential gradient"="solid", "Pseudotime branch with strongest cytokine-response association"="solid")) +
+      guides(linetype=guide_legend(override.aes=list(color=c("#1A1A1A", "#D55E00"), linewidth=c(.42, 1.35)), order=1), color=guide_colorbar(order=2)) +
+      theme(legend.position="bottom", legend.box="vertical") +
+      labs(title=paste0(cy, ": UMAP cytokine-response potential field"),
+           subtitle=paste0("Arrows follow local increases in a Gaussian kernel-smoothed UCell response score (bandwidth=", signif(fld$bandwidth, 3), "). Descriptive only: not a predicted perturbation, physical force, or causal effect."))
+    ggsave(file.path(fdir, paste0(safe_name(cy), "_UMAP_response_potential_field.pdf")), p, width=8.5, height=6.8, device=cairo_pdf)
+    ggsave(file.path(fdir, paste0(safe_name(cy), "_UMAP_response_potential_field.svg")), p, width=8.5, height=6.8)
+    print(p)
+  }
+  grDevices::dev.off()
+  if (length(field_grids)) write.csv(bind_rows(field_grids), file.path(opt$outdir, "UMAP_response_potential_field_grid.csv"), row.names=FALSE)
+}
+
+# Squidiff Fig. 4c-inspired display: a continuous UMAP density surface for
+# high-response cells, plus arrows from the local gradient of the smoothed
+# response score. The density is observational and does not show generated or
+# counterfactual cells; the label intentionally avoids causal language.
+if (isTRUE(opt$make_density_vector_map)) {
+  ddir <- file.path(opt$outdir, "UMAP_mean_response_heatmap_vector_maps"); dir.create(ddir, showWarnings=FALSE)
+  mean_response_grids <- list(); mean_response_score_diagnostics <- list()
+  all_density_pdf <- file.path(ddir, "selected_cytokines_UMAP_response_mean_heatmap_vector_maps.pdf")
+  grDevices::cairo_pdf(all_density_pdf, width=8.7, height=7.0)
+  for (cy in umap_cytokines) {
+    plot_cells <- meta[is.finite(meta$pseudotime), , drop=FALSE]
+    heatmap_bandwidth <- if (!is.null(opt$field_bandwidth) && is.finite(opt$field_bandwidth) && opt$field_bandwidth > 0) {
+      opt$field_bandwidth
+    } else {
+      opt$heatmap_bandwidth_factor * mean(c(diff(range(plot_cells$UMAP_1, na.rm=TRUE)), diff(range(plot_cells$UMAP_2, na.rm=TRUE))))
+    }
+    fld <- make_response_field(plot_cells, cy, n_grid=opt$field_grid, bandwidth=heatmap_bandwidth,
+                               max_cells=opt$field_max_cells, min_density=opt$field_min_density,
+                               arrow_stride=opt$field_arrow_stride)
+    if (is.null(fld)) { warning("Mean-response heatmap skipped for ", cy, ": too few valid cells."); next }
+    fld$grid$cytokine <- cy; fld$grid$bandwidth <- fld$bandwidth; fld$grid$n_cells_used <- fld$n_cells
+    mean_response_grids[[cy]] <- fld$grid
+    # A kernel-smoothed mean is unstable where its denominator is almost zero.
+    # Mask unsupported grid pixels instead of extrapolating into empty UMAP space.
+    support_cutoff <- max(opt$field_min_density, opt$heatmap_min_density)
+    fld$grid$potential_in_support <- ifelse(fld$grid$relative_density >= support_cutoff, fld$grid$potential, NA_real_)
+    # Plot the kernel-normalized local mean response, not a response-weighted
+    # cell count. Unsupported UMAP space is explicitly set to the lowest
+    # supported score so it remains purple rather than being extrapolated.
+    potential_floor <- as.numeric(quantile(fld$grid$potential_in_support, probs=opt$color_q_low, na.rm=TRUE, names=FALSE))
+    if (!is.finite(potential_floor)) potential_floor <- min(fld$grid$potential, na.rm=TRUE)
+    fld$grid$potential_for_plot <- ifelse(is.finite(fld$grid$potential_in_support), fld$grid$potential_in_support, potential_floor)
+    mean_response_grids[[cy]] <- fld$grid
+    potential_limits <- as.numeric(quantile(fld$grid$potential_in_support, probs=c(opt$color_q_low, opt$color_q_high), na.rm=TRUE, names=FALSE))
+    if (!all(is.finite(potential_limits)) || potential_limits[2] <= potential_limits[1]) potential_limits <- range(fld$grid$potential_in_support, na.rm=TRUE)
+    potential_transform <- if (potential_limits[1] < 0) "identity" else opt$umap_color_transform
+    individual_limits <- as.numeric(quantile(plot_cells[[cy]], probs=c(opt$color_q_low, opt$color_q_high), na.rm=TRUE, names=FALSE))
+    if (!all(is.finite(individual_limits)) || individual_limits[2] <= individual_limits[1]) individual_limits <- range(plot_cells[[cy]], na.rm=TRUE)
+    individual_transform <- if (individual_limits[1] < 0) "identity" else opt$umap_color_transform
+    # Use an exact top fraction rather than score >= quantile: many cytokine
+    # signatures have zero-inflated UCell values, for which a quantile cutoff
+    # of zero would otherwise recolour nearly every cell dark purple.
+    finite_order <- order(-plot_cells[[cy]], plot_cells$cell_id, na.last=NA)
+    n_highlight <- max(1L, min(length(finite_order), ceiling(length(finite_order) * (1 - opt$heatmap_highlight_quantile))))
+    highlight_cells <- plot_cells[finite_order[seq_len(n_highlight)], , drop=FALSE]
+    mean_response_score_diagnostics[[cy]] <- data.frame(
+      cytokine=cy, n_cells=nrow(plot_cells), n_highlight=nrow(highlight_cells),
+      zero_fraction=mean(abs(plot_cells[[cy]]) < 1e-12, na.rm=TRUE),
+      score_q50=as.numeric(quantile(plot_cells[[cy]], .50, na.rm=TRUE)),
+      score_q95=as.numeric(quantile(plot_cells[[cy]], .95, na.rm=TRUE)),
+      score_max=max(plot_cells[[cy]], na.rm=TRUE), stringsAsFactors=FALSE)
+    # In-panel callouts make explicit which visual layer each color bar describes.
+    bg_values <- ifelse(is.finite(fld$grid$potential_in_support), fld$grid$potential_in_support, -Inf)
+    bg_target <- fld$grid[which.max(bg_values), , drop=FALSE]
+    point_target <- highlight_cells[which.max(highlight_cells[[cy]]), , drop=FALSE]
+    x_span <- diff(range(fld$grid$UMAP_1, na.rm=TRUE)); y_span <- diff(range(fld$grid$UMAP_2, na.rm=TRUE))
+    x_min <- min(fld$grid$UMAP_1, na.rm=TRUE); x_max <- max(fld$grid$UMAP_1, na.rm=TRUE)
+    y_min <- min(fld$grid$UMAP_2, na.rm=TRUE); y_max <- max(fld$grid$UMAP_2, na.rm=TRUE)
+    layer_callouts <- bind_rows(
+      data.frame(layer="Background heatmap", label="Background heatmap\nLocal mean UCell response", x=x_min + .20*x_span, y=y_max - .08*y_span, xend=bg_target$UMAP_1, yend=bg_target$UMAP_2, color="#FFFFFF", stringsAsFactors=FALSE),
+      data.frame(layer="Individual cells", label=paste0("Colored dots\nTop ", round((1-opt$heatmap_highlight_quantile)*100), "% individual-response cells"), x=x_max - .21*x_span, y=y_min + .09*y_span, xend=point_target$UMAP_1, yend=point_target$UMAP_2, color="#FDE725", stringsAsFactors=FALSE)
+    )
+    p <- ggplot() +
+      geom_raster(data=fld$grid, aes(UMAP_1, UMAP_2, fill=potential_for_plot), interpolate=TRUE, alpha=.98) +
+      geom_contour(data=fld$grid, aes(UMAP_1, UMAP_2, z=potential_for_plot), inherit.aes=FALSE,
+                   color="white", linewidth=.28, bins=7, alpha=.72) +
+      geom_point(data=plot_cells, aes(UMAP_1, UMAP_2), inherit.aes=FALSE, color="grey82", size=max(.28, opt$umap_point_size * .45), alpha=.58) +
+      geom_point(data=highlight_cells, aes(UMAP_1, UMAP_2, color=.data[[cy]]), inherit.aes=FALSE, size=max(.45, opt$umap_point_size * 1.35), alpha=.95) +
+      geom_segment(data=fld$arrows, aes(x=UMAP_1, y=UMAP_2, xend=xend, yend=yend, linetype="Cytokine-response field direction"),
+                   inherit.aes=FALSE, color="#141414", linewidth=.46, alpha=.88,
+                   arrow=arrow(length=grid::unit(1.6, "mm")), show.legend=TRUE)
+    selected <- best_path[best_path$cytokine == cy, , drop=FALSE]
+    if (nrow(selected)) {
+      b <- selected$selected_branch[1]; lc <- long_curves[long_curves$branch == b, , drop=FALSE]
+      if (nrow(lc) >= 3) {
+        p <- p + geom_path(data=lc, aes(x=x, y=y, linetype="Pseudotime branch with strongest cytokine-response association"),
+                           inherit.aes=FALSE, color=line_colors[[b]], linewidth=1.45, show.legend=TRUE)
+        tip <- lc[nrow(lc), , drop=FALSE]; prev <- lc[nrow(lc)-1, , drop=FALSE]
+        p <- p + geom_segment(data=data.frame(x=prev$x, y=prev$y, xend=tip$x, yend=tip$y), aes(x=x, y=y, xend=xend, yend=yend),
+                              inherit.aes=FALSE, color=line_colors[[b]], linewidth=1.45, arrow=arrow(length=grid::unit(3.5, "mm")))
+      }
+    }
+    p <- p +
+      geom_segment(data=layer_callouts, aes(x=x, y=y, xend=xend, yend=yend), inherit.aes=FALSE,
+                   linewidth=.48, linetype="dashed", color=layer_callouts$color, arrow=arrow(length=grid::unit(2.0, "mm")), show.legend=FALSE) +
+      geom_label(data=layer_callouts, aes(x=x, y=y, label=label), inherit.aes=FALSE,
+                 fill="white", color=layer_callouts$color, alpha=.92, fontface="bold", size=3.05, label.size=.32, show.legend=FALSE) +
+      coord_equal(expand=FALSE) + theme_classic(base_size=12) +
+      scale_fill_viridis_c(name="Kernel-smoothed\nmean UCell response", limits=potential_limits, breaks=potential_limits, oob=scales::squish, trans=potential_transform, na.value="#440154") +
+      scale_color_viridis_c(name=paste0("Individual UCell response\n(top ", round((1-opt$heatmap_highlight_quantile)*100), "% cells)"), limits=individual_limits, breaks=individual_limits, oob=scales::squish, trans=individual_transform) +
+      scale_linetype_manual(name="UMAP overlay", values=c("Cytokine-response field direction"="solid", "Pseudotime branch with strongest cytokine-response association"="solid")) +
+      guides(linetype=guide_legend(override.aes=list(color=c("#141414", "#D55E00"), linewidth=c(.46, 1.45)), order=1), fill=guide_colorbar(order=2), color=guide_colorbar(order=3)) +
+      theme(legend.position="bottom", legend.box="vertical") +
+      labs(title=paste0(cy, ": UMAP mean-response heatmap and vector map"),
+           subtitle=paste0("Background is the kernel-normalized local mean UCell response (sum K*score / sum K; not multiplied by cell abundance; bandwidth=", signif(fld$bandwidth, 3), "). Unsupported UMAP space is shown at the lowest response color. Black arrows show the same score gradient; colored points mark exactly the top ", round((1-opt$heatmap_highlight_quantile)*100), "% individual response scores. This is descriptive, not a predicted perturbation or causal force."),
+           x="UMAP_1", y="UMAP_2")
+    ggsave(file.path(ddir, paste0(safe_name(cy), "_UMAP_mean_response_heatmap_vector_map.pdf")), p, width=8.5, height=6.8, device=cairo_pdf)
+    ggsave(file.path(ddir, paste0(safe_name(cy), "_UMAP_mean_response_heatmap_vector_map.svg")), p, width=8.5, height=6.8)
+    print(p)
+  }
+  grDevices::dev.off()
+  if (length(mean_response_grids)) write.csv(bind_rows(mean_response_grids), file.path(opt$outdir, "UMAP_mean_response_heatmap_vector_grid.csv"), row.names=FALSE)
+  if (length(mean_response_score_diagnostics)) write.csv(bind_rows(mean_response_score_diagnostics), file.path(opt$outdir, "UMAP_mean_response_heatmap_score_diagnostics.csv"), row.names=FALSE)
+}
 cat("Completed post-Monocle3 scCRS trajectory analysis: ",opt$outdir,"\n",sep="")
 
